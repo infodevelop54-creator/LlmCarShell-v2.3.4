@@ -129,5 +129,8 @@ class MainActivity : ComponentActivity() {
         data object ObdDashboard : Screen
     }
 
-    companion object { const val EXTRA_AUTO_MIC = "auto_mic" }
+    companion object {
+        const val EXTRA_AUTO_MIC = "auto_mic"
+        const val EXTRA_SCROLL_TO_BOTTOM = "scroll_to_bottom"
+    }
 }
