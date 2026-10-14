@@ -18,7 +18,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,23 +46,23 @@ import com.example.llmcar.MainActivity
 import com.example.llmcar.R
 import com.example.llmcar.data.SettingsRepository
 import com.example.llmcar.ui.ChatViewModel
-import com.example.llmcar.ui.OverlayCollapsedPill
-import com.example.llmcar.ui.OverlayInputWidget
+import com.example.llmcar.ui.OverlayInputOverlay
+import com.example.llmcar.ui.OverlayRoundButton
 import com.example.llmcar.ui.theme.VisualTheme
 import com.example.llmcar.util.AppSignals
 import kotlin.math.abs
 
 /**
- * v2.3.3 — floating widget + popup input overlay.
+ * v2.3.4 — круглая кнопка активации ассистента + оверлей ввода.
  *
- * Сервис держит ДВА независимых окна WindowManager:
- *   1) pillView — маленькая пилюля-кнопка, ПЕРЕМЕЩАЕМАЯ пальцем, без snap-to-edge,
- *      позиция сохраняется в SettingsRepository (overlayPosX / overlayPosY).
- *   2) overlayView — появляется по тапу на пилюлю, содержит поле ввода внизу экрана,
- *      НЕ перемещается, НЕ открывает чат, закрывается крестиком или тапом вне пилюли.
+ * Два независимых окна WindowManager:
+ *   1) pillView  — круглая кнопка. Перетаскивается пальцем, не прилипает к краям,
+ *                  позиция сохраняется. Тап → показать оверлей ввода.
+ *   2) overlayView — появляется по тапу на кнопку, оверлей ввода снизу,
+ *                    без фона. Сразу запускает микрофон.
  *
- * Никаких разворотов в MainActivity (кроме одного случая — кнопка микрофона,
- * которая открывает MainActivity с автостартом голосового ввода).
+ * Страница чата (MainActivity → ChatScreen) открывается только по тапу
+ * на три полоски в оверлее.
  */
 class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner {
 
@@ -72,15 +71,15 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateController = SavedStateRegistryController.create(this)
 
-    // --------- Окно пилюли ---------
+    // --------- Круглая кнопка ---------
     private var pillView: View? = null
     private lateinit var pillParams: WindowManager.LayoutParams
 
-    // --------- Окно оверлея ввода ---------
+    // --------- Оверлей ввода ---------
     private var overlayView: View? = null
     private lateinit var overlayParams: WindowManager.LayoutParams
 
-    // --------- Состояние перетаскивания пилюли ---------
+    // --------- Состояние перетаскивания ---------
     private var dragging: Boolean = false
     private var dragDownX: Float = 0f
     private var dragDownY: Float = 0f
@@ -113,24 +112,23 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
     }
 
     // ============================================================
-    // Окно 1: пилюля-кнопка (перемещаемая)
+    // Окно 1: круглая кнопка
     // ============================================================
 
     @SuppressLint("ClickableViewAccessibility")
     private fun attachPill() {
-        val type = overlayType()
-
         pillParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
+            overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        )
-        pillParams.gravity = Gravity.TOP or Gravity.START
-        pillParams.x = settings.overlayPosX
-        pillParams.y = settings.overlayPosY
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = settings.overlayPosX
+            y = settings.overlayPosY
+        }
 
         val cv = ComposeView(this)
         cv.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
@@ -139,9 +137,7 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
         cv.setContent {
             PillRoot(
                 settings = settings,
-                chatVm = chatVm,
-                onTap = { showInputOverlay() },
-                onClose = { stopSelf() }
+                onTap = { showInputOverlay() }
             )
         }
         cv.setOnTouchListener(pillTouchListener())
@@ -180,7 +176,8 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (dragging) {
-                            // Не прилипаем к краям — только ограничиваем видимой областью.
+                            // НЕ прилипаем к краям. Только страхуем, чтобы
+                            // кнопка не ушла за пределы видимой области.
                             clampPillToScreen()
                             settings.setOverlayPosX(pillParams.x)
                             settings.setOverlayPosY(pillParams.y)
@@ -197,7 +194,7 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
         val v = pillView ?: return
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
-        val w = if (v.width > 0) v.width else 200
+        val w = if (v.width > 0) v.width else 100
         val h = if (v.height > 0) v.height else 100
         pillParams.x = pillParams.x.coerceIn(0, (screenW - w).coerceAtLeast(0))
         pillParams.y = pillParams.y.coerceIn(0, (screenH - h).coerceAtLeast(0))
@@ -208,41 +205,39 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
     }
 
     // ============================================================
-    // Окно 2: оверлей ввода (появляется/исчезает)
+    // Окно 2: оверлей ввода
     // ============================================================
 
     private fun showInputOverlay() {
         if (overlayView != null) return
-        val type = overlayType()
 
         overlayParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            type,
+            overlayType(),
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        )
-        overlayParams.gravity = Gravity.TOP or Gravity.START
-        overlayParams.x = 0
-        overlayParams.y = 0
-        overlayParams.softInputMode =
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
-                    WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
 
         val cv = ComposeView(this)
         cv.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         cv.setViewTreeLifecycleOwner(this)
         cv.setViewTreeSavedStateRegistryOwner(this)
         cv.setContent {
-            InputOverlayRoot(
+            OverlayRoot(
                 settings = settings,
                 onSend = { text ->
                     chatVm.send(text)
                     hideInputOverlay()
                 },
-                onMicClick = {
+                onOpenChat = {
                     hideInputOverlay()
-                    openAppWithMic()
+                    openChatFromOverlay()
                 },
                 onClose = { hideInputOverlay() }
             )
@@ -261,6 +256,21 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
     }
 
     // ============================================================
+    // Открытие страницы чата (по трём полоскам)
+    // ============================================================
+
+    private fun openChatFromOverlay() {
+        val i = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(MainActivity.EXTRA_SCROLL_TO_BOTTOM, true)
+        }
+        try {
+            startActivity(i)
+        } catch (_: Exception) {
+        }
+    }
+
+    // ============================================================
     // Вспомогательное
     // ============================================================
 
@@ -270,17 +280,6 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
         else
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
-
-    private fun openAppWithMic() {
-        val i = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MainActivity.EXTRA_AUTO_MIC, true)
-        }
-        try {
-            startActivity(i)
-        } catch (_: Exception) {
-        }
-    }
 
     private fun notif(): Notification {
         val pi = PendingIntent.getActivity(
@@ -319,49 +318,33 @@ class FloatingButtonService : Service(), SavedStateRegistryOwner, LifecycleOwner
 }
 
 // =============================================================
-// Compose для пилюли-кнопки
+// Compose: обёртка над круглой кнопкой
 // =============================================================
 
 @Composable
 private fun PillRoot(
     settings: SettingsRepository,
-    chatVm: ChatViewModel,
-    onTap: () -> Unit,
-    onClose: () -> Unit
+    onTap: () -> Unit
 ) {
     val palette = VisualTheme.palette(settings.accentHue)
-    val pillHeightDp = VisualTheme.pillHeight(settings.pillSize)
-    val presetIcon = VisualTheme.presetIcon(settings.presetIconStyle)
+    val icon = VisualTheme.presetIcon(settings.presetIconStyle)
 
-    var presetName by remember { mutableStateOf(chatVm.activePresetName()) }
-    LaunchedEffect(Unit) {
-        AppSignals.presetChanged.collect {
-            presetName = chatVm.activePresetName()
-        }
-    }
-
-    Box(Modifier.fillMaxWidth().wrapContentHeight()) {
-        OverlayCollapsedPill(
-            palette = palette,
-            pillHeightDp = pillHeightDp,
-            presetIcon = presetIcon,
-            presetName = "Режим: $presetName",
-            onExpand = onTap,
-            onDragUp = onTap,   // не срабатывает — drag поглощается OnTouchListener
-            onClose = onClose
-        )
-    }
+    OverlayRoundButton(
+        palette = palette,
+        icon = icon,
+        onClick = onTap
+    )
 }
 
 // =============================================================
-// Compose для оверлея ввода
+// Compose: корень оверлея ввода (с прозрачной подложкой)
 // =============================================================
 
 @Composable
-private fun InputOverlayRoot(
+private fun OverlayRoot(
     settings: SettingsRepository,
     onSend: (String) -> Unit,
-    onMicClick: () -> Unit,
+    onOpenChat: () -> Unit,
     onClose: () -> Unit
 ) {
     val palette = VisualTheme.palette(settings.accentHue)
@@ -376,25 +359,24 @@ private fun InputOverlayRoot(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onClose
-            )
+            ),
+        contentAlignment = Alignment.BottomCenter
     ) {
-        // Пилюля ввода — внизу, «проглатывает» клики по себе,
-        // чтобы они не закрывали оверлей.
+        // Проглатываем клики по самой пилюле, чтобы они не закрывали оверлей
         Box(
             Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
-                    onClick = { /* проглатываем */ }
+                    onClick = { /* ничего */ }
                 )
         ) {
-            OverlayInputWidget(
+            OverlayInputOverlay(
                 palette = palette,
                 pillHeightDp = pillHeightDp,
                 onSend = onSend,
-                onMicClick = onMicClick,
+                onOpenChat = onOpenChat,
                 onClose = onClose
             )
         }
