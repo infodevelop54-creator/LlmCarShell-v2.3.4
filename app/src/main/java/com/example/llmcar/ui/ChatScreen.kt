@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -71,6 +72,16 @@ fun ChatScreen(
     var overlayVisible by remember { mutableStateOf(false) }
     var presetName by remember { mutableStateOf(vm.activePresetName()) }
 
+    // Автоскролл вниз при изменении количества сообщений.
+    // Активируется при любом новом сообщении, в т.ч. при открытии чата
+    // через три полоски из оверлея.
+    val listState = rememberLazyListState()
+    LaunchedEffect(vm.messages.size) {
+        if (vm.messages.isNotEmpty()) {
+            listState.animateScrollToItem(vm.messages.size - 1)
+        }
+    }
+
     LaunchedEffect(autoStartMic) {
         if (autoStartMic) { overlayVisible = true; onAutoMicConsumed() }
     }
@@ -123,7 +134,8 @@ fun ChatScreen(
 
             // ===================== Сообщения =====================
             LazyColumn(
-                Modifier.weight(1f),
+                state = listState,
+                modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(vm.messages) { m -> MessageBubble(m) }
@@ -166,7 +178,6 @@ fun ChatScreen(
         }
 
         // ===================== Голосовой оверлей (компактный) =====================
-        // Теперь он не закрывает весь экран: полупрозрачный подложка + таблетка снизу.
         AnimatedVisibility(
             visible = overlayVisible,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -456,9 +467,6 @@ private fun GeminiVoiceOverlayCompact(
         ), label = "wave"
     )
 
-    // ===================== Компактная таблетка =====================
-    // Не занимает весь экран: снизу выезжает «пузырь» с орбом слева,
-    // статусом в центре и кнопкой закрытия справа.
     Box(
         Modifier
             .fillMaxWidth()
@@ -489,7 +497,6 @@ private fun GeminiVoiceOverlayCompact(
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Слева — мини-орб
                 Box(
                     Modifier.size(64.dp),
                     contentAlignment = Alignment.Center
@@ -526,7 +533,6 @@ private fun GeminiVoiceOverlayCompact(
 
                 Spacer(Modifier.width(10.dp))
 
-                // Центр — статус/текст + эквалайзер
                 Column(
                     Modifier.weight(1f),
                     verticalArrangement = Arrangement.Center
@@ -558,7 +564,6 @@ private fun GeminiVoiceOverlayCompact(
 
                 Spacer(Modifier.width(10.dp))
 
-                // Справа — крестик закрытия
                 Box(
                     modifier = Modifier
                         .size(36.dp)
